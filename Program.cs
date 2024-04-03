@@ -16,7 +16,7 @@ namespace vrchat_screenshots_with_world_id
         private const string AutostartRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string AutostartRegistryValue = "VRChatScreenshotRenamer";
 
-        private static string logFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "Low", "VRChat", "VRChat");
+        private static string logFolder = null;
         private static NotifyIcon trayIcon;
         private static FileSystemWatcher watcher;
         private static CancellationTokenSource cancellationTokenSource;
@@ -30,14 +30,62 @@ namespace vrchat_screenshots_with_world_id
 
         static void Main(string[] args)
         {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
 
-            InitializeTrayIcon();
-            InitializeContextMenu();
-            InitializeFileSystemWatcher();
+            try
+            {
+                LogToEventViewer("Initializing log folder...", EventLogEntryType.Information);
+                logFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "Low", "VRChat", "VRChat");
 
-            Application.Run();
+                LogToEventViewer($"vrchat logs at {logFolder}", EventLogEntryType.Information);
+
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+
+                AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+                LogToEventViewer("Initializing tray icon...", EventLogEntryType.Information);
+                InitializeTrayIcon();
+
+                LogToEventViewer("Initializing context menu...", EventLogEntryType.Information);
+                InitializeContextMenu();
+
+                LogToEventViewer("Initializing file system watcher...", EventLogEntryType.Information);
+                InitializeFileSystemWatcher();
+
+                ShowStartupMessage();
+                LogToEventViewer("Starting application...", EventLogEntryType.Information);
+                Application.Run();
+            }
+            catch (Exception ex)
+            {
+                HandleException(ex);
+            }
+        }
+
+        private static void ShowStartupMessage()
+        {
+            string message = "VRChat Screenshot Renamer has started.\n\n" +
+                             "The program will now run in the background and automatically rename VRChat screenshots.\n\n" +
+                             "You can access the program's features through the system tray icon.";
+
+            trayIcon.ShowBalloonTip(5000, "VRChat Screenshot Renamer", message, ToolTipIcon.Info);
+        }
+
+        private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            Exception ex = (Exception)e.ExceptionObject;
+            HandleException(ex);
+        }
+
+        private static void HandleException(Exception ex)
+        {
+            string errorMessage = $"An error occurred:\n\n{ex.Message}\n\n{ex.StackTrace}";
+            MessageBox.Show(errorMessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            LogToEventViewer($"Unhandled exception: {ex}", EventLogEntryType.Error);
+        }
+
+        private static void LogToEventViewer(string message, EventLogEntryType entryType)
+        {
+            Console.WriteLine(message);
         }
 
         private static void InitializeTrayIcon()
@@ -78,10 +126,18 @@ namespace vrchat_screenshots_with_world_id
 
         private static void InitializeFileSystemWatcher()
         {
-            watcher = new FileSystemWatcher(logFolder, "output_log_*.txt");
-            watcher.Created += OnNewLogFileCreated;
-            watcher.EnableRaisingEvents = true;
+            try
+            {
+                watcher = new FileSystemWatcher(logFolder, "output_log_*.txt");
+                watcher.Created += OnNewLogFileCreated;
+                watcher.EnableRaisingEvents = true;
+            }
+            catch (Exception ex)
+            {
+                HandleException(ex);
+            }
         }
+
 
         /// <summary>
         /// Event handler for when a new VRChat log file is created.
@@ -106,16 +162,42 @@ namespace vrchat_screenshots_with_world_id
         /// </summary>
         static async IAsyncEnumerable<string> TailAsync(string file, CancellationToken cancellationToken)
         {
-            using (var fileStream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            using (var reader = new StreamReader(fileStream))
+            FileStream? fileStream = null;
+            StreamReader? reader = null;
+
+            try
             {
+                fileStream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                reader = new StreamReader(fileStream);
                 reader.BaseStream.Seek(0, SeekOrigin.End);
-                while (!cancellationToken.IsCancellationRequested)
-                {
-                    string line = await reader.ReadLineAsync();
-                    if (line != null) yield return line;
-                    else await Task.Delay(1000, cancellationToken);
-                }
+            }
+            catch (Exception ex)
+            {
+                HandleException(ex);
+                yield break;
+            }
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                string? line = await ReadLineAsync(reader);
+                if (line != null) yield return line;
+                else await Task.Delay(5000, cancellationToken);
+            }
+
+            reader?.Dispose();
+            fileStream?.Dispose();
+        }
+
+        static async Task<string?> ReadLineAsync(StreamReader reader)
+        {
+            try
+            {
+                return await reader.ReadLineAsync();
+            }
+            catch (Exception ex)
+            {
+                HandleException(ex);
+                return null;
             }
         }
 
@@ -153,13 +235,22 @@ namespace vrchat_screenshots_with_world_id
         /// <summary>
         /// Renames the specified screenshot file with the world ID appended.
         /// </summary>
-        private static string RenameScreenshotFile(string screenshotPath, string worldId)
+        private static string? RenameScreenshotFile(string screenshotPath, string worldId)
         {
             string newName = Regex.Replace(screenshotPath, @"(.+)(\.\w+)$", $"$1_wrld_{worldId}$2");
             if (File.Exists(screenshotPath))
             {
                 Console.WriteLine($"Moving {screenshotPath} to {newName}");
-                File.Move(screenshotPath, newName);
+                try
+                {
+                    File.Move(screenshotPath, newName);
+                }
+                catch (Exception ex)
+                {
+                    HandleException(ex);
+                    return null;
+                }
+
                 return newName;
             }
             return null;
