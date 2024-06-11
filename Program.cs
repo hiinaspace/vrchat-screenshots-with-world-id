@@ -20,7 +20,6 @@ namespace vrchat_screenshots_with_world_id
         private static NotifyIcon trayIcon;
         private static FileSystemWatcher watcher;
         private static CancellationTokenSource cancellationTokenSource;
-        private static string lastWorld = "";
         private static List<string> recentScreenshots = new List<string>();
 
         private static ContextMenuStrip contextMenu;
@@ -47,6 +46,9 @@ namespace vrchat_screenshots_with_world_id
 
                 LogToEventViewer("Initializing context menu...", EventLogEntryType.Information);
                 InitializeContextMenu();
+
+                LogToEventViewer("Scanning existing log files", EventLogEntryType.Information);
+                ScanExistingLogFiles();
 
                 LogToEventViewer("Initializing file system watcher...", EventLogEntryType.Information);
                 InitializeFileSystemWatcher();
@@ -123,6 +125,23 @@ namespace vrchat_screenshots_with_world_id
 
             trayIcon.ContextMenuStrip = contextMenu;
         }
+        private static void ScanExistingLogFiles()
+        {
+
+            string[] logFiles = Directory.GetFiles(logFolder, "output_log_*.txt");
+            foreach (string logFile in logFiles)
+            {
+                try
+                {
+                    LogToEventViewer($"Scanning entire file {logFile}", EventLogEntryType.Information);
+                    Task.Run(() => ProcessLogFile(TailAsync(logFile, CancellationToken.None, follow: false), updateMenu: false)).Wait();
+                }
+                catch (Exception ex)
+                {
+                    HandleException(ex);
+                }
+            }
+        }
 
         private static void InitializeFileSystemWatcher()
         {
@@ -137,7 +156,6 @@ namespace vrchat_screenshots_with_world_id
                 HandleException(ex);
             }
         }
-
 
         /// <summary>
         /// Event handler for when a new VRChat log file is created.
@@ -154,13 +172,13 @@ namespace vrchat_screenshots_with_world_id
             cancellationTokenSource = new CancellationTokenSource();
             CancellationToken cancellationToken = cancellationTokenSource.Token;
 
-            Task.Run(() => ProcessLogFile(logFile, cancellationToken), cancellationToken);
+            Task.Run(() => ProcessLogFile(TailAsync(logFile, cancellationToken, follow: true), updateMenu: true), cancellationToken);
         }
 
         /// <summary>
         /// Tails the specified log file and yields each new line asynchronously.
         /// </summary>
-        static async IAsyncEnumerable<string> TailAsync(string file, CancellationToken cancellationToken)
+        static async IAsyncEnumerable<string> TailAsync(string file, CancellationToken cancellationToken, bool follow = false)
         {
             FileStream? fileStream = null;
             StreamReader? reader = null;
@@ -169,7 +187,10 @@ namespace vrchat_screenshots_with_world_id
             {
                 fileStream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 reader = new StreamReader(fileStream);
-                reader.BaseStream.Seek(0, SeekOrigin.End);
+
+                // start from beginning of the file when started, so any existing
+                // screnshots get renamed too.
+                reader.BaseStream.Seek(0, SeekOrigin.Begin);
             }
             catch (Exception ex)
             {
@@ -180,9 +201,21 @@ namespace vrchat_screenshots_with_world_id
             while (!cancellationToken.IsCancellationRequested)
             {
                 string? line = await ReadLineAsync(reader);
-                if (line != null) yield return line;
-                else await Task.Delay(5000, cancellationToken);
+                if (line != null)
+                {
+                    yield return line;
+                }
+                else if (follow)
+                {
+                    await Task.Delay(5000, cancellationToken);
+                }
+                else
+                {
+                    LogToEventViewer($"null line, breaking follow", EventLogEntryType.Information);
+                    break;
+                }
             }
+            LogToEventViewer($"done reading {file}", EventLogEntryType.Information);
 
             reader?.Dispose();
             fileStream?.Dispose();
@@ -204,29 +237,37 @@ namespace vrchat_screenshots_with_world_id
         /// <summary>
         /// Processes the specified VRChat log file.
         /// </summary>
-        private static async Task ProcessLogFile(string logFile, CancellationToken cancellationToken)
+        private static async Task ProcessLogFile(IAsyncEnumerable<string> logLines, bool updateMenu)
         {
-            await foreach (string line in TailAsync(logFile, cancellationToken))
+            string lastWorld = null;
+            await foreach (string line in logLines)
             {
                 if (line.Contains("Joining wrld_"))
                 {
                     lastWorld = Regex.Match(line, @"Joining wrld_(\w+-\w+-\w+-\w+-\w+)").Groups[1].Value;
                     Console.WriteLine($"joined world {lastWorld}");
-                    UpdateCurrentWorldMenuItem(lastWorld);
+                    if (updateMenu) UpdateCurrentWorldMenuItem(lastWorld);
                 }
                 else if (line.Contains("Took screenshot to: "))
                 {
                     string screenshotPath = Regex.Match(line, @"Took screenshot to: (.+)").Groups[1].Value;
                     Console.WriteLine($"screenshot taken to {screenshotPath}");
-                    string newName = RenameScreenshotFile(screenshotPath, lastWorld);
-                    if (newName != null)
+                    if (lastWorld != null)
                     {
-                        recentScreenshots.Add(newName);
-                        if (recentScreenshots.Count > 5)
+                        string newName = RenameScreenshotFile(screenshotPath, lastWorld);
+                        if (newName != null)
                         {
-                            recentScreenshots.RemoveAt(0);
+                            Console.WriteLine($"Screenshot moved to {newName}");
+                            recentScreenshots.Add(newName);
+                            if (recentScreenshots.Count > 5)
+                            {
+                                recentScreenshots.RemoveAt(0);
+                            }
+                            // XXX if you try to update the menu stuff before the application is running, somehow the task
+                            // just freezes, with no threads in the debugger. weird. there are better ways to fix this but 
+                            // it's fine for now.
+                            if (updateMenu) UpdateRecentScreenshotsMenu();
                         }
-                        UpdateRecentScreenshotsMenu();
                     }
                 }
             }

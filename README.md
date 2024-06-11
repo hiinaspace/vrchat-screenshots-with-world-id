@@ -10,7 +10,7 @@ When this program is running, screenshots will be renamed like:
 
     VRChat_2024-04-01_19-55-03.980_1920x1080_wrld_679d9eee-f764-4849-810c-420a55199a4c.png
 
-You can use the `wrld_679d9eee-f764-4849-810c-420a55199a4c` part to look up the world info later, e.g. at https://vrchat.com/home/world/wrld_679d9eee-f764-4849-810c-420a55199a4c
+You can use the `wrld_679d9eee-f764-4849-810c-420a55199a4c` part to look up the world info later, e.g. at https://vrchat.com/home/world/wrld_679d9eee-f764-4849-810c-420a55199a4c.
 
 [VRCX](https://github.com/vrcx-team/VRCX/) can rename your screenshots in the same way, but it also does a ton of other stuff; this does exactly one thing, and doesn't require your login info.
 
@@ -41,14 +41,25 @@ Use `dotnet build`, it should work. If you want a standalone .exe without needin
 
 If the notification icon is there, and screenshots you take world id appended.
 
-### Running all the time
+### Do I have to launch it before launching vrchat?
 
-To ensure all your screenshots are renamed, I recommend right-clicking on the tray icon and checking "autostart on login", so it should always be running.
+No. When you launch the tool, it'll actually scan any existing log files you have. Vrchat usually keeps the last few logs around, so any screenshots taken during those logs will get renamed as well.
+
+### What if I forgot to run the exe before the screenshots?
+
+Run the tool and it should rename any recent screenshots for you.
+
+### Running all the time automatically
+
+To ensure all your screenshots are renamed, I recommend right-clicking on the tray icon and checking "autostart on login".
+
+### What if I don't want to?
+
+You can run the tool manually whenever, any recent screenshots should be renamed, then you can exit the tool. It's more convenient to leave it running though.
 
 ### Running only while vrchat is running
 
 Unfortunately there's not a clean way to do this that I know of. This program should be minimal enough to run in the background all the time, but if you care, you can make a wrapper script that runs the renamer, runs vrchat, then closes the renamer once vrchat exits, and use that to launch vrchat.
-
 
 ## Design
 
